@@ -1,34 +1,44 @@
-# portfolio-cms-headless
+﻿# portfolio-cms-headless
 
-CMS headless para portfolio com API e painel admin.
+![CI](https://github.com/Beckerr11/portfolio-cms-headless/actions/workflows/ci.yml/badge.svg)
+
+CMS headless para portfolio.
 
 ## Objetivo
-Construir uma base profissional para portfolio full stack com foco em simplicidade, clareza e evolucao incremental.
+Este repositorio faz parte de uma trilha de portfolio profissional full stack, com foco em simplicidade, clareza e boas praticas.
 
 ## Stack
-Node.js + PostgreSQL + React
+Node.js, CMS API, auth admin e preview token
 
-## MVP (v0.1)
-- CRUD de projetos
-- Publicacao de artigos
-- API publica
-- Autenticacao admin
-
-## Estrutura inicial
-- docs/ROADMAP.md: plano de evolucao
-- src/: codigo fonte principal
-- 	ests/: testes iniciais
-- .github/workflows/ci.yml: pipeline minima
+## Funcionalidades implementadas
+- CRUD admin de projetos e posts
+- API publica de conteudo publicado
+- Preview token com TTL e revogacao
+- Filtro por data de atualizacao
 
 ## Como executar
-Veja as instrucoes no docs/ROADMAP.md e no bloco de setup abaixo.
-`ash
-npm install
+~~~bash
+npm ci
 npm test
 npm run dev
-`
+~~~
+
+## Scripts uteis
+- npm run dev, npm test
+
+## Qualidade
+- CI em .github/workflows/ci.yml
+- Dependabot em .github/dependabot.yml
+- Testes locais obrigatorios antes de merge
+
+## Documentacao
+- [Roadmap](docs/ROADMAP.md)
+- [Checklist de producao](docs/PRODUCTION-CHECKLIST.md)
+- [Contribuicao](CONTRIBUTING.md)
+- [Seguranca](SECURITY.md)
+
 ## Status
 - [x] Scaffold inicial
-- [ ] MVP funcional
-- [ ] Deploy publico
-- [ ] Observabilidade e seguranca avancada
+- [x] Base funcional com testes
+- [ ] Deploy publico com observabilidade completa
+- [ ] Versao 1.0.0 com demo publica
