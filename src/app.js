@@ -1,5 +1,27 @@
 import { randomUUID } from 'node:crypto'
 
+function slugify(input) {
+  return String(input || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80)
+}
+
+function ensureUniqueSlug(items, baseSlug, currentId = '') {
+  let slug = baseSlug || 'item'
+  let attempt = 1
+
+  while (items.some((item) => item.slug === slug && item.id !== currentId)) {
+    attempt += 1
+    slug = `${baseSlug}-${attempt}`
+  }
+
+  return slug
+}
+
 export function createStore() {
   return {
     sessions: new Set(),
@@ -32,16 +54,54 @@ export function createProject(store, token, payload) {
     throw new Error('title e obrigatorio')
   }
 
+  const slug = ensureUniqueSlug(store.projects, slugify(title))
+
   const project = {
     id: randomUUID(),
+    slug,
     title,
     summary: String(payload.summary || '').trim(),
     tech: Array.isArray(payload.tech) ? payload.tech : [],
     published: Boolean(payload.published),
+    updatedAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
   }
 
   store.projects.push(project)
+  return project
+}
+
+export function updateProject(store, token, projectId, payload) {
+  assertAdmin(store, token)
+  const project = store.projects.find((item) => item.id === projectId)
+  if (!project) {
+    throw new Error('projeto nao encontrado')
+  }
+
+  if (payload.title) {
+    project.title = String(payload.title).trim()
+    project.slug = ensureUniqueSlug(store.projects, slugify(project.title), project.id)
+  }
+  if (payload.summary !== undefined) {
+    project.summary = String(payload.summary)
+  }
+  if (payload.tech !== undefined) {
+    project.tech = Array.isArray(payload.tech) ? payload.tech : []
+  }
+  if (payload.published !== undefined) {
+    project.published = Boolean(payload.published)
+  }
+  project.updatedAt = new Date().toISOString()
+  return project
+}
+
+export function deleteProject(store, token, projectId) {
+  assertAdmin(store, token)
+  const index = store.projects.findIndex((item) => item.id === projectId)
+  if (index < 0) {
+    throw new Error('projeto nao encontrado')
+  }
+  const [project] = store.projects.splice(index, 1)
   return project
 }
 
@@ -54,16 +114,54 @@ export function createPost(store, token, payload) {
     throw new Error('title e content sao obrigatorios')
   }
 
+  const slug = ensureUniqueSlug(store.posts, slugify(title))
+
   const post = {
     id: randomUUID(),
+    slug,
     title,
     content,
     tags: Array.isArray(payload.tags) ? payload.tags : [],
     published: Boolean(payload.published),
+    updatedAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
   }
 
   store.posts.push(post)
+  return post
+}
+
+export function updatePost(store, token, postId, payload) {
+  assertAdmin(store, token)
+  const post = store.posts.find((item) => item.id === postId)
+  if (!post) {
+    throw new Error('post nao encontrado')
+  }
+
+  if (payload.title) {
+    post.title = String(payload.title).trim()
+    post.slug = ensureUniqueSlug(store.posts, slugify(post.title), post.id)
+  }
+  if (payload.content !== undefined) {
+    post.content = String(payload.content)
+  }
+  if (payload.tags !== undefined) {
+    post.tags = Array.isArray(payload.tags) ? payload.tags : []
+  }
+  if (payload.published !== undefined) {
+    post.published = Boolean(payload.published)
+  }
+  post.updatedAt = new Date().toISOString()
+  return post
+}
+
+export function deletePost(store, token, postId) {
+  assertAdmin(store, token)
+  const index = store.posts.findIndex((item) => item.id === postId)
+  if (index < 0) {
+    throw new Error('post nao encontrado')
+  }
+  const [post] = store.posts.splice(index, 1)
   return post
 }
 
@@ -136,11 +234,41 @@ export function createApp(store = createStore(), credentials = {
         return
       }
 
+      const projectMatch = url.pathname.match(/^\/admin\/projects\/([^/]+)$/)
+      if (projectMatch && req.method === 'PATCH') {
+        const payload = await readJsonBody(req)
+        const token = extractBearerToken(req)
+        const project = updateProject(store, token, projectMatch[1], payload)
+        sendJson(res, 200, { project })
+        return
+      }
+      if (projectMatch && req.method === 'DELETE') {
+        const token = extractBearerToken(req)
+        const project = deleteProject(store, token, projectMatch[1])
+        sendJson(res, 200, { project })
+        return
+      }
+
       if (req.method === 'POST' && url.pathname === '/admin/posts') {
         const payload = await readJsonBody(req)
         const token = extractBearerToken(req)
         const post = createPost(store, token, payload)
         sendJson(res, 201, { post })
+        return
+      }
+
+      const postMatch = url.pathname.match(/^\/admin\/posts\/([^/]+)$/)
+      if (postMatch && req.method === 'PATCH') {
+        const payload = await readJsonBody(req)
+        const token = extractBearerToken(req)
+        const post = updatePost(store, token, postMatch[1], payload)
+        sendJson(res, 200, { post })
+        return
+      }
+      if (postMatch && req.method === 'DELETE') {
+        const token = extractBearerToken(req)
+        const post = deletePost(store, token, postMatch[1])
+        sendJson(res, 200, { post })
         return
       }
 
