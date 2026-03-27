@@ -8,8 +8,10 @@ import {
   createPost,
   updatePost,
   deletePost,
-  publicProjects,
-  publicPosts,
+  createPreviewToken,
+  listProjects,
+  listPosts,
+  revokePreviewToken,
 } from '../src/app.js'
 
 test('cms flow supports admin write/update and public read', () => {
@@ -45,9 +47,42 @@ test('cms flow supports admin write/update and public read', () => {
   assert.equal(postUpdated.published, true)
   assert.equal(postUpdated.tags.length, 1)
 
-  assert.equal(publicProjects(store).length, 2)
-  assert.equal(publicPosts(store).length, 1)
+  assert.equal(listProjects(store).length, 2)
+  assert.equal(listPosts(store).length, 1)
 
   const deletedPost = deletePost(store, session.token, post.id)
   assert.equal(deletedPost.id, post.id)
+})
+
+test('preview token allows reading drafts and can be revoked', () => {
+  const store = createStore()
+  const credentials = { email: 'admin@portfolio.dev', password: 'admin123' }
+  const session = loginAdmin(store, credentials, credentials)
+
+  createProject(store, session.token, {
+    title: 'Projeto Draft',
+    summary: 'Nao publicado',
+    published: false,
+  })
+
+  createPost(store, session.token, {
+    title: 'Post Draft',
+    content: 'Conteudo rascunho',
+    published: false,
+  })
+
+  assert.equal(listProjects(store).length, 0)
+  assert.equal(listPosts(store).length, 0)
+
+  const previewToken = createPreviewToken(store, session.token, { ttlMinutes: 30 })
+
+  const projectsWithPreview = listProjects(store, { previewToken: previewToken.token })
+  const postsWithPreview = listPosts(store, { previewToken: previewToken.token })
+  assert.equal(projectsWithPreview.length, 1)
+  assert.equal(postsWithPreview.length, 1)
+
+  revokePreviewToken(store, session.token, previewToken.token)
+
+  assert.equal(listProjects(store, { previewToken: previewToken.token }).length, 0)
+  assert.equal(listPosts(store, { previewToken: previewToken.token }).length, 0)
 })

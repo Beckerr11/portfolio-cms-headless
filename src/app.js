@@ -25,6 +25,7 @@ function ensureUniqueSlug(items, baseSlug, currentId = '') {
 export function createStore() {
   return {
     sessions: new Set(),
+    previewTokens: [],
     projects: [],
     posts: [],
   }
@@ -44,6 +45,62 @@ function assertAdmin(store, token) {
   if (!store.sessions.has(token)) {
     throw new Error('acesso admin negado')
   }
+}
+
+function parseTtlMinutes(value, fallback = 30) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback
+  }
+  return Math.min(Math.round(parsed), 24 * 60)
+}
+
+export function createPreviewToken(store, token, payload = {}, defaults = {}) {
+  assertAdmin(store, token)
+
+  const ttlMinutes = parseTtlMinutes(payload.ttlMinutes ?? defaults.ttlMinutes, 30)
+  const previewToken = randomUUID().replace(/-/g, '')
+
+  const record = {
+    token: previewToken,
+    label: String(payload.label || 'preview').trim(),
+    createdAt: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + ttlMinutes * 60 * 1000).toISOString(),
+    revokedAt: null,
+  }
+
+  store.previewTokens.push(record)
+  return record
+}
+
+export function revokePreviewToken(store, token, previewToken) {
+  assertAdmin(store, token)
+
+  const record = store.previewTokens.find((item) => item.token === previewToken)
+  if (!record) {
+    throw new Error('preview token nao encontrado')
+  }
+
+  record.revokedAt = new Date().toISOString()
+  return record
+}
+
+export function listPreviewTokens(store, token) {
+  assertAdmin(store, token)
+  return store.previewTokens.map((item) => ({ ...item }))
+}
+
+function isPreviewTokenValid(store, previewToken) {
+  if (!previewToken) {
+    return false
+  }
+
+  const record = store.previewTokens.find((item) => item.token === previewToken)
+  if (!record || record.revokedAt) {
+    return false
+  }
+
+  return new Date(record.expiresAt).getTime() > Date.now()
 }
 
 export function createProject(store, token, payload) {
@@ -165,12 +222,45 @@ export function deletePost(store, token, postId) {
   return post
 }
 
+function applyUpdatedAfterFilter(items, updatedAfter) {
+  if (!updatedAfter) {
+    return items
+  }
+
+  const afterTs = new Date(updatedAfter).getTime()
+  if (!Number.isFinite(afterTs)) {
+    throw new Error('updatedAfter invalido')
+  }
+
+  return items.filter((item) => new Date(item.updatedAt).getTime() >= afterTs)
+}
+
+export function listProjects(store, filters = {}) {
+  const includeDraft = isPreviewTokenValid(store, filters.previewToken)
+  const source = includeDraft ? store.projects : store.projects.filter((item) => item.published)
+  return applyUpdatedAfterFilter(source, filters.updatedAfter)
+}
+
+export function listPosts(store, filters = {}) {
+  const includeDraft = isPreviewTokenValid(store, filters.previewToken)
+  const source = includeDraft ? store.posts : store.posts.filter((item) => item.published)
+  return applyUpdatedAfterFilter(source, filters.updatedAfter)
+}
+
 export function publicProjects(store) {
-  return store.projects.filter((item) => item.published)
+  return listProjects(store)
 }
 
 export function publicPosts(store) {
-  return store.posts.filter((item) => item.published)
+  return listPosts(store)
+}
+
+function findBySlug(items, slug) {
+  const item = items.find((entry) => entry.slug === slug)
+  if (!item) {
+    throw new Error('conteudo nao encontrado')
+  }
+  return item
 }
 
 function sendJson(res, statusCode, payload) {
@@ -206,10 +296,18 @@ function extractBearerToken(req) {
   return value.slice('Bearer '.length)
 }
 
-export function createApp(store = createStore(), credentials = {
-  email: process.env.ADMIN_EMAIL || 'admin@portfolio.dev',
-  password: process.env.ADMIN_PASSWORD || 'admin123',
-}) {
+export function createApp(
+  store = createStore(),
+  credentials = {
+    email: process.env.ADMIN_EMAIL || 'admin@portfolio.dev',
+    password: process.env.ADMIN_PASSWORD || 'admin123',
+  },
+  options = {}
+) {
+  const previewDefaults = {
+    ttlMinutes: parseTtlMinutes(options.previewTokenTtlMinutes || process.env.PREVIEW_TOKEN_TTL_MINUTES, 30),
+  }
+
   return async function app(req, res) {
     const url = new URL(req.url || '/', 'http://localhost')
 
@@ -223,6 +321,29 @@ export function createApp(store = createStore(), credentials = {
         const payload = await readJsonBody(req)
         const session = loginAdmin(store, payload, credentials)
         sendJson(res, 200, session)
+        return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/admin/preview-tokens') {
+        const payload = await readJsonBody(req)
+        const token = extractBearerToken(req)
+        const previewToken = createPreviewToken(store, token, payload, previewDefaults)
+        sendJson(res, 201, { previewToken })
+        return
+      }
+
+      if (req.method === 'GET' && url.pathname === '/admin/preview-tokens') {
+        const token = extractBearerToken(req)
+        const previewTokens = listPreviewTokens(store, token)
+        sendJson(res, 200, { previewTokens })
+        return
+      }
+
+      const previewTokenMatch = url.pathname.match(/^\/admin\/preview-tokens\/([^/]+)$/)
+      if (previewTokenMatch && req.method === 'DELETE') {
+        const token = extractBearerToken(req)
+        const previewToken = revokePreviewToken(store, token, previewTokenMatch[1])
+        sendJson(res, 200, { previewToken })
         return
       }
 
@@ -273,12 +394,40 @@ export function createApp(store = createStore(), credentials = {
       }
 
       if (req.method === 'GET' && url.pathname === '/api/projects') {
-        sendJson(res, 200, { projects: publicProjects(store) })
+        const projects = listProjects(store, {
+          previewToken: url.searchParams.get('previewToken') || '',
+          updatedAfter: url.searchParams.get('updatedAfter') || '',
+        })
+        sendJson(res, 200, { projects })
+        return
+      }
+
+      const projectSlugMatch = url.pathname.match(/^\/api\/projects\/([^/]+)$/)
+      if (req.method === 'GET' && projectSlugMatch) {
+        const projects = listProjects(store, {
+          previewToken: url.searchParams.get('previewToken') || '',
+        })
+        const project = findBySlug(projects, projectSlugMatch[1])
+        sendJson(res, 200, { project })
         return
       }
 
       if (req.method === 'GET' && url.pathname === '/api/posts') {
-        sendJson(res, 200, { posts: publicPosts(store) })
+        const posts = listPosts(store, {
+          previewToken: url.searchParams.get('previewToken') || '',
+          updatedAfter: url.searchParams.get('updatedAfter') || '',
+        })
+        sendJson(res, 200, { posts })
+        return
+      }
+
+      const postSlugMatch = url.pathname.match(/^\/api\/posts\/([^/]+)$/)
+      if (req.method === 'GET' && postSlugMatch) {
+        const posts = listPosts(store, {
+          previewToken: url.searchParams.get('previewToken') || '',
+        })
+        const post = findBySlug(posts, postSlugMatch[1])
+        sendJson(res, 200, { post })
         return
       }
 
