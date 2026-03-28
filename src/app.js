@@ -1,4 +1,7 @@
+import { buildLandingHtml } from './ui/landing.js'
 import { randomUUID } from 'node:crypto'
+
+const MAX_BODY_SIZE_BYTES = 1_000_000
 
 function slugify(input) {
   return String(input || '')
@@ -271,7 +274,16 @@ function sendJson(res, statusCode, payload) {
 function readJsonBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = []
-    req.on('data', (chunk) => chunks.push(chunk))
+    let totalSize = 0
+    req.on('data', (chunk) => {
+      totalSize += chunk.length
+      if (totalSize > MAX_BODY_SIZE_BYTES) {
+        reject(new Error('payload excede limite de 1MB'))
+        req.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
     req.on('end', () => {
       if (!chunks.length) {
         resolve({})
@@ -312,6 +324,12 @@ export function createApp(
     const url = new URL(req.url || '/', 'http://localhost')
 
     try {
+            if (req.method === 'GET' && url.pathname === '/') {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        res.end(buildLandingHtml())
+        return
+      }
+
       if (req.method === 'GET' && url.pathname === '/health') {
         sendJson(res, 200, { ok: true, service: 'portfolio-cms-headless' })
         return
@@ -437,3 +455,5 @@ export function createApp(
     }
   }
 }
+
+
